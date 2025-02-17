@@ -2,10 +2,11 @@ use crossterm::event::{self, Event, KeyCode};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
-use std::env;
 use std::error::Error;
 use std::io;
 use std::path::Path;
+use std::env;
+
 mod draw;
 mod predicion;
 mod serde_data;
@@ -24,9 +25,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         eprintln!("Error: El archivo {} no existe.", file_path);
         return Ok(());
     }
-    // Cargar los datos desde el CSV
+
     let data = load_data_from_csv(file_path)?;
-    //let data = load_data_from_csv("data.csv")?;
 
     let past_days: Vec<f64> = data.iter().map(|d| d.apertura * 1000.0).collect();
     let future_data: Vec<f64> = data.iter().map(|d| d.ultimo * 1000.0).collect();
@@ -40,6 +40,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut current_prediction = predict_price(98.0, past_days.clone(), future_data.clone(), true)?;
 
     let mut using_linear = true;
+    let mut chart_type = ChartType::Line;
 
     // Crear datos para el gráfico con fechas
     let mut chart_data: Vec<(String, f64)> = data
@@ -58,13 +59,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Bucle principal que espera 'q' o Esc para salir
     loop {
-        let chart_type = if using_linear {
-            ChartType::Line
-        } else {
-            ChartType::Candlestick
-        };
-
+        let info = draw::create_info_panel(&chart_data);
         terminal.draw(|f| {
+            f.render_widget(info.clone(), f.size());
             if let Err(e) = draw_chart(f, &chart_data, current_prediction, &chart_type) {
                 eprintln!("Error dibujando el gráfico: {}", e);
             }
@@ -74,23 +71,52 @@ fn main() -> Result<(), Box<dyn Error>> {
             if let Event::Key(key) = event::read()? {
                 match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => break,
-                    KeyCode::Char('p') => {
+                    KeyCode::Char('t') => {
                         // Cambiar entre predicciones
-                        using_linear = !using_linear;
-                        if using_linear {
-                            current_prediction = predict_price(
-                                98.0,
-                                past_days.clone(),
-                                future_data.clone(),
-                                using_linear,
-                            )?;
-                        } else {
-                            current_prediction = predict_price_moving_average(
-                                98.0,
-                                past_days.clone(),
-                                future_data.clone(),
-                            )?;
+                        chart_type = chart_type.next();
+                        match chart_type {
+                            ChartType::Line => {
+                                current_prediction = predict_price(
+                                    98.0,
+                                    past_days.clone(),
+                                    future_data.clone(),
+                                    true,
+                                )?;
+                            },
+                            ChartType::Candlestick => {
+                                current_prediction = predict_price(
+                                    98.0,
+                                    past_days.clone(),
+                                    future_data.clone(),
+                                    false,
+                                )?;
+                            },
+                            ChartType::MACD => {
+                                let (macd_line, _) = predicion::calculate_macd(&chart_data);
+                                current_prediction = macd_line;
+                            },
+                            ChartType::SMA => {
+                                current_prediction = predicion::calculate_sma(&chart_data, 20);
+                            },
+                            ChartType::RSI => {
+                                current_prediction = predicion::calculate_rsi(&chart_data, 14);
+                            },
+                            ChartType::BollingerBands => {
+                                let (upper, middle, _) = predicion::calculate_bollinger_bands(&chart_data, 20);
+                                current_prediction = middle;
+                            },
+                            ChartType::Momentum => {
+                                current_prediction = predicion::calculate_momentum(&chart_data, 14);
+                            },
+                            _ => {},
                         }
+                        // Forzar un redibujo del gráfico
+                        terminal.draw(|f| {
+                            f.render_widget(info.clone(), f.size());
+                            if let Err(e) = draw_chart(f, &chart_data, current_prediction, &chart_type) {
+                                eprintln!("Error dibujando el gráfico: {}", e);
+                            }
+                        })?;
                     }
                     _ => {}
                 }

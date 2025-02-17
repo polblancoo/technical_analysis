@@ -8,7 +8,14 @@ use ratatui::{
     widgets::{Block, Borders, Dataset, Paragraph, canvas::{Canvas, Context, Line as CanvasLine, Rectangle as CanvasRectangle}, Chart, Axis},
     Frame,
 };
+//mod predicion;
+use crate::predicion;
 use crate::predicion::*;
+use crate::predicion::calculate_rsi;
+use crate::predicion::calculate_macd;
+use crate::predicion::calculate_bollinger_bands;
+use crate::predicion::calculate_momentum;
+use crate::predicion::calculate_sma;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChartType {
@@ -16,6 +23,11 @@ pub enum ChartType {
     Line,
     Dots,
     Bars,
+    MACD,
+    SMA,
+    RSI,
+    BollingerBands,
+    Momentum,
 }
 
 impl ChartType {
@@ -24,7 +36,12 @@ impl ChartType {
             ChartType::Candlestick => ChartType::Line,
             ChartType::Line => ChartType::Dots,
             ChartType::Dots => ChartType::Bars,
-            ChartType::Bars => ChartType::Candlestick,
+            ChartType::Bars => ChartType::MACD,
+            ChartType::MACD => ChartType::SMA,
+            ChartType::SMA => ChartType::RSI,
+            ChartType::RSI => ChartType::BollingerBands,
+            ChartType::BollingerBands => ChartType::Momentum,
+            ChartType::Momentum => ChartType::Candlestick,
         }
     }
 
@@ -34,6 +51,11 @@ impl ChartType {
             ChartType::Line => "Línea",
             ChartType::Dots => "Puntos",
             ChartType::Bars => "Barras",
+            ChartType::MACD => "MACD",
+            ChartType::SMA => "SMA",
+            ChartType::RSI => "RSI",
+            ChartType::BollingerBands => "Bollinger Bands",
+            ChartType::Momentum => "Momentum",
         }
     }
 }
@@ -88,6 +110,21 @@ pub fn draw_chart<B: Backend>(
         ChartType::Bars => {
             draw_bars_view(f, data, upper_chunks[1])?;
         },
+        ChartType::MACD => {
+            draw_macd_view(f, data, upper_chunks[1])?;
+        },
+        ChartType::SMA => {
+            draw_sma_view(f, data, upper_chunks[1])?;
+        },
+        ChartType::RSI => {
+            draw_rsi_view(f, data, upper_chunks[1])?;
+        },
+        ChartType::BollingerBands => {
+            draw_bollinger_bands_view(f, data, upper_chunks[1])?;
+        },
+        ChartType::Momentum => {
+            draw_momentum_view(f, data, upper_chunks[1])?;
+        },
     }
 
     let controls = create_control_panel(chart_type);
@@ -96,12 +133,18 @@ pub fn draw_chart<B: Backend>(
     Ok(())
 }
 
-fn create_info_panel(data: &Vec<(String, f64)>) -> Paragraph<'static> {
+pub fn create_info_panel(data: &Vec<(String, f64)>) -> Paragraph<'static> {
     let max_value = data.iter().map(|(_, v)| v).fold(f64::NEG_INFINITY, |a, &b| a.max(b));
     let min_value = data.iter().map(|(_, v)| v).fold(f64::INFINITY, |a, &b| a.min(b));
     let avg_value = data.iter().map(|(_, v)| v).sum::<f64>() / data.len() as f64;
     let last_value = data.last().map(|(_, v)| *v).unwrap_or(0.0);
-
+// Calcular indicadores técnicos
+    let rsi = predicion::calculate_rsi(data, 14);
+    let (macd_line, signal_line) = predicion::calculate_macd(data);
+    let (upper_band, middle_band, lower_band) = predicion::calculate_bollinger_bands(data, 20);
+    let momentum = predicion::calculate_momentum(data, 14);
+    let sma = predicion::calculate_sma(data, 20);
+    
     let info_text = vec![
         Line::from(vec![
             Span::styled("Información del Mercado", Style::default().fg(Color::Green))
@@ -122,6 +165,40 @@ fn create_info_panel(data: &Vec<(String, f64)>) -> Paragraph<'static> {
             Span::styled("Último: ", Style::default().fg(Color::Cyan)),
             Span::styled(format!("${:.2}", last_value), Style::default().fg(Color::White))
         ]),
+
+
+ Line::from(vec![
+            Span::styled("RSI (14): ", Style::default().fg(Color::Yellow)),
+            Span::styled(format!("{:.2}", rsi), Style::default().fg(Color::White))
+        ]),
+        Line::from(vec![
+            Span::styled("MACD: ", Style::default().fg(Color::Yellow)),
+            Span::styled(format!("{:.2}", macd_line), Style::default().fg(Color::White)),
+            Span::styled(" / Señal: ", Style::default().fg(Color::Yellow)),
+            Span::styled(format!("{:.2}", signal_line), Style::default().fg(Color::White))
+        ]),
+       Line::from(vec![
+    Span::styled("Bollinger Bands - Superior: ", Style::default().fg(Color::Yellow)),
+    Span::styled(format!("{:.2}", upper_band), Style::default().fg(Color::White))
+]),
+Line::from(vec![
+    Span::styled("Bollinger Bands - Medio: ", Style::default().fg(Color::Yellow)),
+    Span::styled(format!("{:.2}", middle_band), Style::default().fg(Color::White))
+]),
+Line::from(vec![
+    Span::styled("Bollinger Bands - Inferior: ", Style::default().fg(Color::Yellow)),
+    Span::styled(format!("{:.2}", lower_band), Style::default().fg(Color::White))
+]),        Line::from(vec![
+            Span::styled("Momentum (14): ", Style::default().fg(Color::Yellow)),
+            Span::styled(format!("{:.2}%", momentum), Style::default().fg(Color::White))
+        ]),
+        Line::from(vec![
+            Span::styled("SMA (20): ", Style::default().fg(Color::Yellow)),
+            Span::styled(format!("${:.2}", sma), Style::default().fg(Color::White))
+        ]),
+
+
+
     ];
 
     Paragraph::new(info_text)
@@ -343,6 +420,175 @@ fn draw_bars_view<B: Backend>(
 
     let chart = Chart::new(datasets)
         .block(Block::default().title("Gráfico de Barras").borders(Borders::ALL))
+        .x_axis(create_x_axis(data))
+        .y_axis(create_y_axis(data));
+
+    f.render_widget(chart, area);
+    Ok(())
+}
+
+fn draw_macd_view<B: Backend>(
+    f: &mut Frame<B>,
+    data: &[(String, f64)],
+    area: Rect,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let data_vec: Vec<(String, f64)> = data.to_vec();
+    let (macd_line, signal_line) = calculate_macd(&data_vec);
+    let macd_data: Vec<(f64, f64)> = data.iter()
+        .enumerate()
+        .map(|(i, _)| (i as f64, macd_line))
+        .collect();
+    let signal_data: Vec<(f64, f64)> = data.iter()
+        .enumerate()
+        .map(|(i, _)| (i as f64, signal_line))
+        .collect();
+
+    let datasets = vec![
+        Dataset::default()
+            .name("MACD")
+            .marker(symbols::Marker::Braille)
+            .style(Style::default().fg(Color::Cyan))
+            .data(&macd_data),
+        Dataset::default()
+            .name("Signal")
+            .marker(symbols::Marker::Dot)
+            .style(Style::default().fg(Color::Red))
+            .data(&signal_data),
+    ];
+
+    let chart = Chart::new(datasets)
+        .block(Block::default().title("Gráfico de MACD").borders(Borders::ALL))
+        .x_axis(create_x_axis(data))
+        .y_axis(create_y_axis(data));
+
+    f.render_widget(chart, area);
+    Ok(())
+}
+
+fn draw_sma_view<B: Backend>(
+    f: &mut Frame<B>,
+    data: &[(String, f64)],
+    area: Rect,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let data_vec: Vec<(String, f64)> = data.to_vec();
+    let sma_value = calculate_sma(&data_vec, 20);
+    let sma_data: Vec<(f64, f64)> = data.iter()
+        .enumerate()
+        .map(|(i, _)| (i as f64, sma_value))
+        .collect();
+
+    let datasets = vec![Dataset::default()
+        .name("SMA")
+        .marker(symbols::Marker::Braille)
+        .style(Style::default().fg(Color::Cyan))
+        .data(&sma_data)
+    ];
+
+    let chart = Chart::new(datasets)
+        .block(Block::default().title("Gráfico de SMA").borders(Borders::ALL))
+        .x_axis(create_x_axis(data))
+        .y_axis(create_y_axis(data));
+
+    f.render_widget(chart, area);
+    Ok(())
+}
+
+fn draw_rsi_view<B: Backend>(
+    f: &mut Frame<B>,
+    data: &[(String, f64)],
+    area: Rect,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let data_vec: Vec<(String, f64)> = data.to_vec();
+    let rsi_value = calculate_rsi(&data_vec, 14);
+    let rsi_data: Vec<(f64, f64)> = data.iter()
+        .enumerate()
+        .map(|(i, _)| (i as f64, rsi_value))
+        .collect();
+
+    let datasets = vec![Dataset::default()
+        .name("RSI")
+        .marker(symbols::Marker::Braille)
+        .style(Style::default().fg(Color::Cyan))
+        .data(&rsi_data)
+    ];
+
+    let chart = Chart::new(datasets)
+        .block(Block::default().title("Gráfico de RSI").borders(Borders::ALL))
+        .x_axis(create_x_axis(data))
+        .y_axis(create_y_axis(data));
+
+    f.render_widget(chart, area);
+    Ok(())
+}
+
+fn draw_bollinger_bands_view<B: Backend>(
+    f: &mut Frame<B>,
+    data: &[(String, f64)],
+    area: Rect,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let data_vec: Vec<(String, f64)> = data.to_vec();
+    let (upper, middle, lower) = calculate_bollinger_bands(&data_vec, 20);
+    let upper_data: Vec<(f64, f64)> = data.iter()
+        .enumerate()
+        .map(|(i, _)| (i as f64, upper))
+        .collect();
+    let middle_data: Vec<(f64, f64)> = data.iter()
+        .enumerate()
+        .map(|(i, _)| (i as f64, middle))
+        .collect();
+    let lower_data: Vec<(f64, f64)> = data.iter()
+        .enumerate()
+        .map(|(i, _)| (i as f64, lower))
+        .collect();
+
+    let datasets = vec![
+        Dataset::default()
+            .name("Upper Band")
+            .marker(symbols::Marker::Braille)
+            .style(Style::default().fg(Color::Cyan))
+            .data(&upper_data),
+        Dataset::default()
+            .name("Middle Band")
+            .marker(symbols::Marker::Dot)
+            .style(Style::default().fg(Color::Red))
+            .data(&middle_data),
+        Dataset::default()
+            .name("Lower Band")
+            .marker(symbols::Marker::Dot)
+            .style(Style::default().fg(Color::Green))
+            .data(&lower_data),
+    ];
+
+    let chart = Chart::new(datasets)
+        .block(Block::default().title("Gráfico de Bollinger Bands").borders(Borders::ALL))
+        .x_axis(create_x_axis(data))
+        .y_axis(create_y_axis(data));
+
+    f.render_widget(chart, area);
+    Ok(())
+}
+
+fn draw_momentum_view<B: Backend>(
+    f: &mut Frame<B>,
+    data: &[(String, f64)],
+    area: Rect,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let data_vec: Vec<(String, f64)> = data.to_vec();
+    let momentum_value = calculate_momentum(&data_vec, 14);
+    let momentum_data: Vec<(f64, f64)> = data.iter()
+        .enumerate()
+        .map(|(i, _)| (i as f64, momentum_value))
+        .collect();
+
+    let datasets = vec![Dataset::default()
+        .name("Momentum")
+        .marker(symbols::Marker::Braille)
+        .style(Style::default().fg(Color::Cyan))
+        .data(&momentum_data)
+    ];
+
+    let chart = Chart::new(datasets)
+        .block(Block::default().title("Gráfico de Momentum").borders(Borders::ALL))
         .x_axis(create_x_axis(data))
         .y_axis(create_y_axis(data));
 
