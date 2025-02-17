@@ -17,7 +17,7 @@ pub struct Data {
     #[serde(rename = "vol.")]
     pub volumen: String,
     #[serde(rename = "% var.")]
-    pub var: String
+    pub var: String,
 }
 
 // Función para deserializar flotantes con formato de coma
@@ -45,3 +45,4 @@ pub fn load_data_from_csv(file_path: &str) -> Result<Vec<Data>, Box<dyn std::err
 
     Ok(data)
 }
+

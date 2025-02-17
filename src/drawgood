@@ -1,0 +1,130 @@
+use ratatui::{
+    backend::Backend,
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+     prelude::*,
+    style::{Color, Style},
+
+    text::{Span, Spans, Text},
+    widgets::{Block, Borders, Chart, Dataset, Paragraph, Axis},
+    Frame,
+};
+use crate::predicion::*;
+use std::sync::Arc;
+use lazy_static::lazy_static;
+use std::sync::Mutex;
+
+pub fn draw_chart<B: Backend>(
+    f: &mut Frame<B>,
+    data: &Vec<(String, f64)>,
+    prediction_value: f64,
+    using_linear: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let size = f.size();
+    
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(30),
+            Constraint::Percentage(70),
+        ])
+        .split(size);
+
+    let max_value = data.iter().map(|(_, v)| v).fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+    let min_value = data.iter().map(|(_, v)| v).fold(f64::INFINITY, |a, &b| a.min(b));
+    let avg_value = data.iter().map(|(_, v)| v).sum::<f64>() / data.len() as f64;
+    
+    // Panel de información (sin cambios)
+    let info_text = vec![
+        Line::from(vec![
+            Span::styled("Información del Mercado", Style::default().fg(Color::Green))
+        ]),
+        // ... resto del info_text ...
+    ];
+    
+    let info_paragraph = Paragraph::new(info_text)
+        .block(Block::default().title("Estadísticas").borders(Borders::ALL))
+        .alignment(Alignment::Left);
+
+    f.render_widget(info_paragraph, chunks[0]);
+
+    // Gráfico mejorado
+    let datasets = create_datasets(data);
+    let chart = Chart::new(datasets)
+        .block(Block::default().title("Precio del Mercado").borders(Borders::ALL))
+        .x_axis(create_x_axis(data))
+        .y_axis(create_y_axis(data));
+
+    f.render_widget(chart, chunks[1]);
+
+    Ok(())
+}
+
+fn create_datasets(data: &Vec<(String, f64)>) -> Vec<Dataset<'static>> {
+    let points: Vec<(f64, f64)> = data.iter()
+        .enumerate()
+        .map(|(i, (_, y))| (i as f64, *y))
+        .collect();
+
+    let static_points: &'static [(f64, f64)] = Box::leak(points.into_boxed_slice());
+
+    vec![Dataset::default()
+        .name("Precio BTC")
+        .marker(symbols::Marker::Dot)
+        .style(Style::default().fg(Color::Cyan))
+        .data(static_points)]
+}
+
+fn create_x_axis(data: &Vec<(String, f64)>) -> Axis<'static> {
+    let data_len = data.len() as f64;
+    let num_labels = 6; // Número de etiquetas que queremos mostrar
+    let step = (data_len / (num_labels - 1) as f64).floor() as usize;
+    
+    let mut labels = Vec::new();
+    for i in 0..num_labels {
+        let idx = (i * step).min(data.len() - 1);
+        if idx < data.len() {
+            labels.push(Span::styled(
+                data[idx].0.clone(),
+                Style::default().fg(Color::Gray)
+            ));
+        }
+    }
+
+    Axis::default()
+        .title("Tiempo")
+        .style(Style::default().fg(Color::Gray))
+        .bounds([0.0, data_len])
+        .labels(labels)
+}
+
+fn create_y_axis(data: &Vec<(String, f64)>) -> Axis<'static> {
+    let max_value = data.iter().map(|(_, v)| v).fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+    let min_value = data.iter().map(|(_, v)| v).fold(f64::INFINITY, |a, &b| a.min(b));
+    
+    // Añadir un poco de margen al rango
+    let range = max_value - min_value;
+    let bounds = [
+        (min_value - range * 0.05).max(0.0),
+        max_value + range * 0.05
+    ];
+    
+    // Crear más etiquetas para el eje Y
+    let num_labels = 5;
+    let step = (bounds[1] - bounds[0]) / (num_labels - 1) as f64;
+    
+    let labels: Vec<Span> = (0..num_labels)
+        .map(|i| {
+            let value = bounds[0] + step * i as f64;
+            Span::styled(
+                format!("${:.0}", value),
+                Style::default().fg(Color::Gray)
+            )
+        })
+        .collect();
+
+    Axis::default()
+        .title("Precio")
+        .style(Style::default().fg(Color::Gray))
+        .bounds(bounds)
+        .labels(labels)
+}
